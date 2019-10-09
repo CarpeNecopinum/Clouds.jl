@@ -10,16 +10,28 @@ PointCloud{Dim,T,SIndex}() where {Dim,T,SIndex} = PointCloud(Vector{Vec{Dim,T}}(
 PointCloud() = PointCloud(Vector{Vec3f0}(), nothing, Dict{Symbol,Vector}())
 #PointCloud{Dim,T <: AbstractFloat}(positions::Vector{SVector{Dim,T}} = Vector{SVector{Dim,T}}()) = PointCloud(positions, NN.KDTree(positions), Dict{Symbol, Vector}())
 
-function PointCloud(positions::Vector{Vec{Dim,T}}, attributes::Dict{Symbol,Vector}) where {Dim, T}
-    tree = NN.KDTree(positions, NN.Euclidean(); leafsize = 16, reorder = true)
-    positions .= positions[tree.indices]
+function PointCloud(positions::Vector{Vec{Dim,T}}, attributes::Dict{Symbol,Vector}; debug = false) where {Dim, T}
+    debug && println("Generating initial KD-Tree")
+    tree = NN.KDTree(positions, NN.Euclidean(); leafsize = 64, reorder = true)
+    return PointCloud(positions, tree, attributes)
+
+    debug && println("Reshuffling cloud attributes reverse")
+    haskey(attributes, :original_index) || (attributes[:original_index] = Vector{Int}(1:length(positions)))
+    positions[tree.indices] .= positions
     for (key, value) in attributes
-        value .= value[tree.indices]
+        value[tree.indices] .= value
     end
 
+    debug && println("Building final KD-Tree")
     tree = NN.KDTree(positions, tree.hyper_rec, Vector{Int}(1:length(positions)), tree.metric, tree.nodes, tree.tree_data, true)
     PointCloud(positions, tree, attributes)
 end
+
+function PointCloud(positions::Vector{Vec{Dim,T}}; attributes...) where {Dim, T}
+    PointCloud(positions, convert(Dict{Symbol,Vector}, attributes))
+end
+
+withkdtree(cloud::PointCloud) = PointCloud(cloud.positions, cloud.attributes)
 
 positions(cloud::PointCloud) = cloud.positions
 normals(cloud::PointCloud) = cloud[:normal]::Vector{Vec3f0}
@@ -78,4 +90,19 @@ function combine_clouds!(sources::AbstractArray)
         end
     end
     target
+end
+
+function Base.filter!(pred, cloud::PointCloud)
+    keep = pred.(1:length(cloud))::BitVector
+    (!all(keep)) || return cloud
+
+    ps = cloud.positions[keep]
+    resize!(cloud.positions, length(ps))
+    cloud.positions .= ps
+
+    for (key, val) in cloud.attributes
+        cloud.attributes[key] = val[keep]
+    end
+
+    withkdtree(cloud)
 end

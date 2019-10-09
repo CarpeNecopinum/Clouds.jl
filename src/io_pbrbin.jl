@@ -1,9 +1,5 @@
 using FileIO
 using Snappy
-import GeometryTypes
-const Vec3f0 = GeometryTypes.Vec3f0
-const Point3f0 = GeometryTypes.Point3f0
-using ColorTypes
 import NearestNeighbors
 NN = NearestNeighbors
 
@@ -46,5 +42,45 @@ function loadPBRBIN(filename::AbstractString)
         loadCompressed!(f, temp[:color]::Vector{Vec4{UInt8}})
     end
 
-    PointCloud(temp.positions, temp.attributes)ra
+    color = temp[:color]::Vector{Vec4{UInt8}}
+    for i in eachindex(color)
+        c = color[i]
+        color[i] = Vec4(c[3], c[2], c[1], c[4])
+    end
+
+    PointCloud(temp.positions, temp.attributes)
+end
+
+function storeCompressed(io::IO, vec::Vector)
+    write(io, UInt64(length(vec)))
+    write(io, Snappy.compress(Vector{UInt8}(reinterpret(UInt8, vec))))
+end
+
+function savePBRBIN(cloud::PointCloud, filename::AbstractString)
+    print(stderr, "Saving PBRBin...")
+    open(filename, "w") do f
+        write(f, Int32(2)) # type = Compressed PBR bin
+
+        n_points = length(cloud)
+        write(f, Int32(n_points))
+
+        print(stderr, "\rSaving $n_points points\u1b[K")
+        storeCompressed(f, cloud.positions)
+
+        print(stderr, "\rSaving $n_points normals\u1b[K")
+        storeCompressed(f, cloud[:normal]::Vector{Vec3f0})
+
+        print(stderr, "\rSaving $n_points radii\u1b[K")
+        storeCompressed(f, cloud[:radius]::Vector{Float32})
+
+        print(stderr, "\rShuffling colors[K")
+        color = copy(cloud[:color]::Vector{Vec4{UInt8}})
+        for i in eachindex(color)
+            c = color[i]
+            color[i] = Vec4(c[3], c[2], c[1], c[4])
+        end
+
+        print(stderr, "\rSaving $n_points colors\u1b[K")
+        storeCompressed(f, color)
+    end
 end
