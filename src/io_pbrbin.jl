@@ -13,42 +13,79 @@ function loadCompressed!(io::IO, into::Vector{T}) where {T}
 
     uncompressed_data = Snappy.uncompress(compressed_data)
     into .= reinterpret(T, uncompressed_data)
+    into
+end
+
+function loadPBRBIN_content(type::Val{2}, f)
+    n_points = read!(f, Ref{Int32}())[]
+    cloud = PointCloud(;positions = zeros(Vec3f0, n_points),
+        normals = zeros(Vec3f0, n_points),
+        radii = zeros(Float32, n_points),
+        colors = zeros(Vec4{UInt8}, n_points))
+
+    print(stderr, "\rLoading $n_points points\u1b[K")
+    loadCompressed!(f, cloud.positions)
+
+    print(stderr, "\rLoading $n_points normals\u1b[K")
+    loadCompressed!(f, cloud.normals)
+
+    print(stderr, "\rLoading $n_points radii\u1b[K")
+    loadCompressed!(f, cloud.radii)
+
+    print(stderr, "\rLoading $n_points colors\u1b[K")
+    loadCompressed!(f, cloud.colors)
+
+    cloud
+end
+
+const PBRBinPropTypes = Dict{UInt32, DataType}(
+    0 => Float32,
+    1 => Vec2f0,
+    2 => Vec3f0,
+    3 => Float64,
+    6 => Int32,
+    15 => UInt32,
+    18 => UInt16
+)
+
+function loadPBRBIN_content(type::Val{3}, f)
+    n_points = read!(f, Ref{Int32}())[]
+    n_props = read!(f, Ref{Int32}())[]
+    @show n_points, n_props
+
+    props = Dict{Symbol,Vector}()
+    for prop_id in 1:n_props
+        n_chars = read!(f, Ref{Int32}())[]
+        prop_name = read!(f, Vector{UInt8}(undef, n_chars)) |> String
+        prop_type = PBRBinPropTypes[read!(f, Ref{UInt32}())[]]
+        @show prop_type
+        props[Symbol(prop_name)] = loadCompressed!(f, Vector{prop_type}(undef, n_points))
+    end
+
+    if haskey(props, :Colors)
+        props[:Colors] = reinterpret(RGB24, props[:Colors]) |> collect
+    end
+
+    PointCloud(; props...)
 end
 
 function loadPBRBIN(filename::AbstractString)
     print(stderr, "Reading PBRBin...")
     prog = ProgressUnknown("Reading PBRBin:\u1b[K")
-    temp = PointCloud{3,Float32,Nothing}()
-    open(filename, "r") do f
+    cloud = open(filename, "r") do f
         type = read!(f, Ref{Int32}())[]
-        @assert type == 2
-
-        n_points = read!(f, Ref{Int32}())[]
-
-        print(stderr, "\rLoading $n_points points\u1b[K")
-        resize!(temp.positions, n_points)
-        loadCompressed!(f, temp.positions)
-
-        print(stderr, "\rLoading $n_points normals\u1b[K")
-        temp[:normal] = Vector{Vec3f0}(undef, n_points)
-        loadCompressed!(f, temp[:normal]::Vector{Vec3f0})
-
-        print(stderr, "\rLoading $n_points radii\u1b[K")
-        temp[:radius] = Vector{Float32}(undef, n_points)
-        loadCompressed!(f, temp[:radius]::Vector{Float32})
-
-        print(stderr, "\rLoading $n_points colors\u1b[K")
-        temp[:color] = Vector{Vec4{UInt8}}(undef, n_points)
-        loadCompressed!(f, temp[:color]::Vector{Vec4{UInt8}})
+        loadPBRBIN_content(Val(Int(type)), f)
     end
 
-    color = temp[:color]::Vector{Vec4{UInt8}}
-    for i in eachindex(color)
-        c = color[i]
-        color[i] = Vec4(c[3], c[2], c[1], c[4])
+    if hasfield(typeof(cloud), :colors)
+        color = cloud.colors
+        for i in eachindex(color)
+            c = color[i]
+            color[i] = Vec4(c[3], c[2], c[1], c[4])
+        end
     end
 
-    PointCloud(temp.positions, temp.attributes)
+    cloud
 end
 
 function storeCompressed(io::IO, vec::Vector)
@@ -65,13 +102,18 @@ function savePBRBIN(cloud::PointCloud, filename::AbstractString)
         write(f, Int32(n_points))
 
         print(stderr, "\rSaving $n_points points\u1b[K")
+        @assert eltype(cloud.positions[1]) === Float32 "PBRbin can only store clouds with float positions"
+        @assert length(cloud.positions[1]) === 3 "PBRbin can only store 3D points"
         storeCompressed(f, cloud.positions)
 
         print(stderr, "\rSaving $n_points normals\u1b[K")
-        storeCompressed(f, cloud[:normal]::Vector{Vec3f0})
+        @assert eltype(cloud.normals[1]) === Float32 "PBRbin can only store clouds with float normals"
+        @assert length(cloud.normals[1]) === 3 "PBRbin can only store 3D normals"
+        storeCompressed(f, cloud.normals)
 
         print(stderr, "\rSaving $n_points radii\u1b[K")
-        storeCompressed(f, cloud[:radius]::Vector{Float32})
+        @assert eltype(cloud.radii) === Float32 "PBRbin can only store clouds with float radii"
+        storeCompressed(f, cloud.radii)
 
         print(stderr, "\rShuffling colors[K")
         color = copy(cloud[:color]::Vector{Vec4{UInt8}})

@@ -1,0 +1,145 @@
+import Mmap: mmap
+import JLD2: load, save
+
+struct CloudFolder
+    path::String
+end
+
+point_attributes_file(folder::CloudFolder) = joinpath(folder.path, "point_attributes.txt")
+cloud_attributes_file(folder::CloudFolder) = joinpath(folder.path, "cloud_attributes.txt")
+
+function read_attribute_types(file)
+    result = Dict{Symbol, DataType}()
+    if ispath(file)
+        open(file) do f
+            while !eof(f)
+                typename, attrname = readline(f) |> split
+                type = Meta.parse(typename) |> eval
+                result[Symbol(attrname)] = type
+            end
+        end
+    end
+    result
+end
+
+function read_attrs(folder, file; singleton = false)
+    result = Dict{Symbol, Array}()
+    types = read_attribute_types(file)
+    for (k,v) in pairs(types)
+        mapped = if singleton
+            mmap(open(joinpath(folder, "$(k).bin"), read = true, write = true, truncate = false), Array{v,0}, ())
+        else
+            mmap(open(joinpath(folder, "$(k).bin"), read = true, write = true, truncate = false), Vector{v})
+        end
+        result[k] = mapped
+    end
+    result
+end
+
+function default_state(::Type{T}) where {T}
+    @assert !isempty(methods(T,())) "To use a non-bits type as attribute, define a default constructor or overload Clouds.default_state(::Type{T}) for it."
+    T()
+end
+
+function add_attribute_impl(folder::CloudFolder, textfile::String, attr::Pair{Symbol,DataType}, ignore_existing::Bool, check_type::Bool, n_elements::Int)
+    if !isdir(folder.path)
+        mkdir(folder.path)
+    end
+
+    filename = joinpath(folder.path, "$(attr[1]).bin")
+    if !ispath(filename)
+        open(textfile; append = true) do f
+            println(f, "$(attr[2]) $(attr[1])")
+        end
+        open(filename; write = true) do f
+            truncate(f, n_elements * sizeof(attr[2]))
+        end
+    elseif !ignore_existing
+        error("Attribute $(attr[1]) already exists in folder")
+    elseif check_type
+        attrs = read_attribute_types(textfile)
+        if (attrs[attr[1]] != attr[2])
+            error("Attribute $(attr[1]) already exists with different type $(attrs[attr[1]]) vs $(attr[2])")
+        end
+    end
+    folder
+end
+
+function num_points(folder::CloudFolder)
+    types = read_attribute_types(point_attributes_file(folder))
+    !isempty(types) || (return 0)
+    name, type = first(types)
+    filename = joinpath(folder.path, "$(name).bin")
+    stat(filename).size ÷ sizeof(type)
+end
+
+"""
+    add_point_attribute(folder, attr::Pair{Symbol,DataType};
+        gnore_existing = true, check_type = true)
+
+    Add a point attribute (Vector that is resized together with the cloud) of
+    the given name => type to the folder.
+"""
+function add_point_attribute(folder::CloudFolder, attr::Pair{Symbol,DataType}; ignore_existing = true, check_type = true)
+    add_attribute_impl(folder, point_attributes_file(folder), attr, ignore_existing, check_type, num_points(folder))
+end
+
+"""
+    add_cloud_attribute(folder::CloudFolder, attr::Pair{Symbol,DataType};
+        ignore_existing = true, check_type = true)
+
+    Add a cloud attribute (single object no matter the size of the cloud) of
+    the given name => type to the folder.
+"""
+function add_cloud_attribute(folder::CloudFolder, attr::Pair{Symbol,DataType}; ignore_existing = true, check_type = true)
+    add_attribute_impl(folder, cloud_attributes_file(folder), attr, ignore_existing, check_type, 1)
+end
+
+"""
+    mmap(::CloudFolder)
+
+    Map the binary files of the point cloud folder into memory and return a
+    PointCloud assembled from those
+"""
+function mmap(folder::CloudFolder)
+    @assert ispath(folder.path)
+
+    point_attributes = read_attrs(folder.path, point_attributes_file(folder))
+    cloud_attributes = read_attrs(folder.path, cloud_attributes_file(folder); singleton = true)
+
+    PointCloud(;point_attributes..., cloud_attributes...)
+end
+
+function Base.resize!(folder::CloudFolder, new_size::Int)
+    attrs = read_attribute_types(point_attributes_file(folder))
+    for (name, type) in attrs
+        filename = joinpath(folder.path, "$(name).bin")
+        new_filesize = sizeof(type) * new_size
+        open(filename; read = true, write = true) do f
+            truncate(f, new_filesize)
+        end
+    end
+    folder
+end
+
+function CloudFolder(path::String, init::PointCloud)
+    folder = CloudFolder(path)
+    n_points = length(init)
+
+    for (k,v) in pairs(init.data)
+        if length(v) < n_points
+            add_cloud_attribute(folder, k => eltype(v))
+        else
+            add_point_attribute(folder, k => eltype(v))
+        end
+    end
+
+    resize!(folder, n_points)
+    cloud = mmap(folder)
+
+    for (k,v) in pairs(init.data)
+        cloud[k] .= v
+    end
+
+    folder
+end

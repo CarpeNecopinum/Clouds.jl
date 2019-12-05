@@ -8,7 +8,7 @@ module Clouds
     import Quaternions
     using ProgressMeter
     using LinearAlgebra
-    using GeometryTypes: Vec, Mat, Point, Point3, Vec3, Vec4, Mat4, Vec3f0, Point3f0
+    using GeometryTypes
     using Quaternions: Quaternion
     using Base.Threads
     using ColorTypes
@@ -34,6 +34,8 @@ module Clouds
     include("io_vrsplats.jl")
     include("io_pbrjl.jl")
     include("io_las.jl")
+    include("io_ascii.jl")
+    include("io_cloudfolder.jl")
 
     include("combine.jl")
 
@@ -42,5 +44,9 @@ module Clouds
         loadPTS,
         saveVRSplats,
         compute_radii,
-        loadE57
+        loadE57,
+        compute_normals,
+        add_point_attribute,
+        add_cloud_attribute,
+        CloudFolder
 end

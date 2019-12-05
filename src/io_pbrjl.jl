@@ -42,10 +42,9 @@ function loadPBRJL(f::IO)
         read!(f, arr)
     end
     dict = Dict(attribs)
-    eltype(eltype(dict[:position]))
-    result = PointCloud{3,eltype(eltype(dict[:position])),Nothing}(dict[:position], nothing, dict)
-    delete!(result, :position)
-    result
+    dict[:positions] = dict[:position]
+    delete!(dict[:position])
+    PointCloud(dict...)
 end
 
 function loadPBRJL(filename::AbstractString)

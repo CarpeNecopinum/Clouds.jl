@@ -73,13 +73,15 @@ function readPointDataRecordFormat3(io, header, tail, ::Val{props}) where {props
         end
     end
 
-    props_dict = Dict{Symbol, Vector}()
-    isnothing(intensities) || (props_dict[:intensity] = intensities)
-    isnothing(classifications) || (props_dict[:classification] = classifications)
-    isnothing(user_data) || (props_dict[:user_data] = user_data)
-    isnothing(point_source_id) || (props_dict[:point_source_id] = point_source_id)
+    result = PointCloud(positions = positions)
 
-    PointCloud(positions, props_dict)
+    props_dict = Dict{Symbol, Vector}()
+    isnothing(intensities) || (props_dict[:intensities] = intensities)
+    isnothing(classifications) || (props_dict[:classifications] = classifications)
+    isnothing(user_data) || (props_dict[:user_datas] = user_data)
+    isnothing(point_source_id) || (props_dict[:point_source_ids] = point_source_id)
+
+    PointCloud(positions = positions, props_dict...)
 end
 
 function loadLAS(filename::AbstractString, props = [:intensity, :user_data, :point_source_id, :classification])
@@ -143,6 +145,8 @@ function mapLAS(f::IOStream)
 
     if (tail.point_data_record_format == 3)
         mmapPointDataRecordFormat3(f, header, tail)
+    else
+        println("Unknown point_data_record_format $(tail.point_data_record_format)")
     end
 end
 
@@ -195,5 +199,5 @@ function loadLASPy(filename::AbstractString)
     end
     println(" done.")
 
-    PointCloud(positions; color = color)
+    PointCloud(positions = positions, colors = color)
 end

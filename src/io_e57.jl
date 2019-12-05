@@ -166,10 +166,10 @@ function read_e57_cloud(points::LightXML.XMLElement, dp::E57Depager)
     struc = parse_prototype(points["prototype"][1])
     global laststruc = struc
 
-    result = PointCloud()
+    result = PointCloud(positions = Vec3f0[])
     for (name, type) in struc
         name == "cartesian" && continue
-        result[Symbol(name)] = Vector{type}()
+        result = Clouds.add(result; Symbol(name) => Vector{type}())
     end
     resize!(result, parse(Int, LightXML.attribute(points, "recordCount")))
 
@@ -186,6 +186,12 @@ function read_e57_cloud(points::LightXML.XMLElement, dp::E57Depager)
 
     while any(bytesoffsets .< sizeof.(streams))
         head = read!(dp, Ref{DataPacketHeader}())[]
+        @show head.packetType
+        if head.packetType == 0x00 # index packet -> ignore
+            skip(dp, head.packetLogicalLengthMinus1 - sizeof(DataPacketHeader) - 1)
+            continue
+        end
+
         @assert head.packetType == 0x01
         @assert head.bytestreamCount == length(streams)
         portionLengths = read!(dp, Vector{UInt16}(undef, length(streams)))

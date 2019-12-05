@@ -1,6 +1,6 @@
 
-struct CloudGridV2
-    cloud::PointCloud{3,Float32,Nothing}
+struct CloudGridV2{Cloud <: PointCloud}
+    cloud::Cloud
     edgeLen::Float32
     grid::Set{Vec3{Int32}}
 end

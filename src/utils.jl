@@ -9,17 +9,30 @@ function compute_radii(cloud; min_neighbors = 6, factor = 1.0)
     radii
 end
 
-function fit_normal(pts::AbstractArray{Vec3f0})
+function fit_normal(pts::AbstractArray)
     com = mean(pts)
     cov = sum((x.-com) * (x-com)' for x in pts)
     eig = eigen(cov)
     eig.vectors[:,argmin(eig.values)]
 end
 
-function refine_normal(pts::AbstractArray{Vec3f0}, guess::Vec3f0)
+function refine_normal(pts::AbstractArray, guess)
     n = fit_normal(pts)
     (guess ⋅ n) > 0 ? n : -n
 end
+
+function compute_normals_radius!(points::AbstractVector, normals::AbstractVector, tree, radius::Real)
+    @threads for i in 1:length(points)
+        idcs = NN.inrange(tree, points[i], radius, false)
+        normals[i] = fit_normal(@view points[idcs])
+    end
+    normals
+end
+
+compute_normals_radius(cloud::PointCloud, radius::Real) =
+    compute_normals_radius!(positions(cloud), similar(positions(cloud)), tree(cloud), radius)
+compute_normals_radius(points::AbstractVector, tree, radius::Real) =
+    compute_normals_radius!(points, similar(points), tree, radius)
 
 function compute_normals(cloud::PointCloud; n_neighbors = 6)
     @assert cloud.spatial_index != nothing
