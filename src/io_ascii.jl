@@ -1,12 +1,18 @@
+import ZipFile
+
+function saveASCII(f::IO, properties::Vector...)
+    @assert length(properties) > 0
+    for i in 1:length(properties[1])
+        join(f, Base.Iterators.flatten(p[i] for p in properties), " ")
+        println(f)
+    end
+end
 
 function saveASCII(filename::AbstractString, properties::Vector...)
     @assert length(properties) > 0
 
     open(filename, "w") do f
-        for i in 1:length(properties[1])
-            join(f, [join(p[i], " ") for p in properties], " ")
-            println(f)
-        end
+        saveASCII(f, properties...)
     end
 end
 

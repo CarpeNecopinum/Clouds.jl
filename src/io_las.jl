@@ -174,12 +174,26 @@ end
 
 using PyCall
 
+
+function loadLASPyProperty(filename::AbstractString, propname)
+    laspy = pyimport("laspy")
+    lasfile = laspy.file.File(filename)
+    py"""
+        from gc import collect
+        from numpy import array
+        """
+    prop = py"array(getattr($lasfile, $propname))"
+    prop
+end
+
 function loadLASPy(filename::AbstractString)
     laspy = pyimport("laspy")
     lasfile = laspy.file.File(filename)
 
+    attrs = Dict{Symbol, Vector}()
+
     println("Loading positions ...")
-    positions = Vec3f0.(zip(lasfile.x, lasfile.y, lasfile.z))
+    attrs[:positions] = Vec3f0.(zip(lasfile.x, lasfile.y, lasfile.z))
 
     py"""
         from gc import collect
@@ -187,17 +201,21 @@ function loadLASPy(filename::AbstractString)
         """
 
     print("Loading colors...")
-    color = begin
-        red = py"array($lasfile.red)"
-        py"collect()"
-        green = py"array($lasfile.green)"
-        py"collect()"
-        blue = py"array($lasfile.blue)"
-        py"collect()"
+    try
+        attrs[:color] = begin
+            red = py"array($lasfile.red)"
+            py"collect()"
+            green = py"array($lasfile.green)"
+            py"collect()"
+            blue = py"array($lasfile.blue)"
+            py"collect()"
 
-        Vec3f0.(zip(red, green, blue)) / Float32(typemax(eltype(red)))
+            Vec3f0.(zip(red, green, blue)) / Float32(typemax(eltype(red)))
+        end
+        println(" done.")
+    catch e
+        println(" no colors available apparently :(")
     end
-    println(" done.")
 
-    PointCloud(positions = positions, colors = color)
+    PointCloud(attrs)
 end

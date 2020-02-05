@@ -1,12 +1,12 @@
-import Mmap: mmap
-import JLD2: load, save
+import Mmap: mmap, sync!
+using FileIO: load, save
 
 struct CloudFolder
     path::String
 end
 
 point_attributes_file(folder::CloudFolder) = joinpath(folder.path, "point_attributes.txt")
-cloud_attributes_file(folder::CloudFolder) = joinpath(folder.path, "cloud_attributes.txt")
+cloud_attributes_file(folder::CloudFolder) = joinpath(folder.path, "cloud_attributes.jld2")
 
 function read_attribute_types(file)
     result = Dict{Symbol, DataType}()
@@ -84,16 +84,16 @@ function add_point_attribute(folder::CloudFolder, attr::Pair{Symbol,DataType}; i
     add_attribute_impl(folder, point_attributes_file(folder), attr, ignore_existing, check_type, num_points(folder))
 end
 
-"""
-    add_cloud_attribute(folder::CloudFolder, attr::Pair{Symbol,DataType};
-        ignore_existing = true, check_type = true)
-
-    Add a cloud attribute (single object no matter the size of the cloud) of
-    the given name => type to the folder.
-"""
-function add_cloud_attribute(folder::CloudFolder, attr::Pair{Symbol,DataType}; ignore_existing = true, check_type = true)
-    add_attribute_impl(folder, cloud_attributes_file(folder), attr, ignore_existing, check_type, 1)
-end
+# """
+#     add_cloud_attribute(folder::CloudFolder, attr::Pair{Symbol,DataType};
+#         ignore_existing = true, check_type = true)
+#
+#     Add a cloud attribute (single object no matter the size of the cloud) of
+#     the given name => type to the folder.
+# """
+# function add_cloud_attribute(folder::CloudFolder, attr::Pair{Symbol,DataType}; ignore_existing = true, check_type = true)
+#     add_attribute_impl(folder, cloud_attributes_file(folder), attr, ignore_existing, check_type, 1)
+# end
 
 """
     mmap(::CloudFolder)
@@ -105,9 +105,28 @@ function mmap(folder::CloudFolder)
     @assert ispath(folder.path)
 
     point_attributes = read_attrs(folder.path, point_attributes_file(folder))
-    cloud_attributes = read_attrs(folder.path, cloud_attributes_file(folder); singleton = true)
 
-    PointCloud(;point_attributes..., cloud_attributes...)
+    caf = cloud_attributes_file(folder)
+    cloud_attributes = isfile(caf) ?
+        load(caf, "cloud_attributes") :
+        Dict{Symbol, Any}()
+
+    cloud_attributes[:_folder] = folder
+    PointCloud(point_attributes, cloud_attributes)
+end
+
+function sync!(cloud::PointCloud)
+    @assert haskey(cloud.cloud_attributes, :_folder) "To sync! a cloud it has to be a mapped one"
+    for a in values(cloud.point_attributes)
+        sync!(a)
+    end
+
+    folder = cloud.cloud_attributes[:_folder]
+
+    cloud_attributes = delete!(copy(cloud.cloud_attributes), :_folder)
+
+    save(cloud_attributes_file(folder), "cloud_attributes", cloud_attributes)
+    cloud
 end
 
 function Base.resize!(folder::CloudFolder, new_size::Int)
@@ -126,20 +145,19 @@ function CloudFolder(path::String, init::PointCloud)
     folder = CloudFolder(path)
     n_points = length(init)
 
-    for (k,v) in pairs(init.data)
-        if length(v) < n_points
-            add_cloud_attribute(folder, k => eltype(v))
-        else
-            add_point_attribute(folder, k => eltype(v))
-        end
+    #JLD2.save(cloud_attributes_file(folder), "cloud_attributes", init.cloud_attributes)
+
+    for (k,v) in init.point_attributes
+        add_point_attribute(folder, k => eltype(v))
     end
 
     resize!(folder, n_points)
     cloud = mmap(folder)
-
-    for (k,v) in pairs(init.data)
+    for (k,v) in init.point_attributes
         cloud[k] .= v
     end
+    merge!(cloud.cloud_attributes, init.cloud_attributes)
+    sync!(cloud)
 
     folder
 end

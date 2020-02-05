@@ -1,10 +1,12 @@
 using StaticArrays
 
-struct PointCloud{DataT <: NamedTuple}
-    data::DataT
+struct PointCloud
+    point_attributes::Dict{Symbol, Vector}
+    cloud_attributes::Dict{Symbol, Any}
 end
 
-PointCloud(;kwargs...) = PointCloud(values(kwargs))
+PointCloud() = PointCloud(Dict{Symbol,Vector}(), Dict{Symbol, Any}())
+PointCloud(point_attrs::Dict{Symbol, Vector}) = PointCloud(point_attrs, Dict{Symbol, Any}())
 
 # functions to pin some often used attributes to one name
 positions(cloud::PointCloud) = cloud.positions
@@ -12,22 +14,36 @@ normals(cloud::PointCloud) = cloud.normals
 tree(cloud::PointCloud) = cloud.tree
 
 function Base.getproperty(cloud::PointCloud, name::Symbol)
-    if haskey(getfield(cloud, :data), name)
-        getfield(cloud, :data)[name]
+    if haskey(getfield(cloud, :point_attributes), name)
+        getfield(cloud, :point_attributes)[name]
+    elseif haskey(getfield(cloud, :cloud_attributes), name)
+        getfield(cloud, :cloud_attributes)[name]
     else
         getfield(cloud, name)
     end
 end
 
+function Base.getindex(cloud::PointCloud, attrname::Union{Symbol,String})
+    name = Symbol(attrname)
+    if haskey(getfield(cloud, :cloud_attributes), name)
+        getfield(cloud, :cloud_attributes)[name]
+    elseif haskey(getfield(cloud, :point_attributes), name)
+        getfield(cloud, :point_attributes)[name]
+    else
+        throw(KeyError(name))
+    end
+end
+
 function Base.propertynames(cloud::PointCloud)
-    return (fieldnames(typeof(cloud))..., fieldnames(typeof(getfield(cloud, :data)))...)
+    (keys(cloud.point_attributes)..., keys(cloud.cloud_attributes)..., fieldnames(PointCloud)...)
 end
 
 function Base.length(cloud::PointCloud)
-    haskey(cloud.data, :positions) && return length(positions(cloud))
-    haskey(cloud.data, :normals) && return length(normals(cloud))
-    haskey(cloud.data, 1) && return length(cloud.data[1])
-    return 0
+    if !isempty(cloud.point_attributes)
+        length(first(cloud.point_attributes)[2])
+    else
+        0
+    end
 end
 
 function add(cloud::PointCloud; kw_args...)
@@ -41,9 +57,42 @@ function add_kdtree(cloud::PointCloud)
     add(cloud; tree = injectdata(tree, positions(cloud)))
 end
 
-Base.show(io::IO,cloud::PointCloud) = print(io,"$(typeof(cloud))(length=$(length(cloud)), $(keys(cloud.data))")
+#Base.show(io::IO,cloud::PointCloud) = print(io,"$(typeof(cloud))(length=$(length(cloud)), $(keys(cloud.data))")
 
-Base.getindex(cloud::PointCloud, attrname::Union{Symbol,String}) = getfield(cloud.data, Symbol(attrname))
+Base.show(io::IO,cloud::PointCloud) = print(io,"$(typeof(cloud))(length=$(length(cloud)), $(keys(cloud.point_attributes)), $(keys(cloud.cloud_attributes))")
+
+function Base.setindex!(cloud::PointCloud, val, attrname::Union{Symbol,String})
+    setindex!(cloud.cloud_attributes, val, Symbol(attrname))
+    cloud
+end
+
+function Base.setproperty!(cloud::PointCloud, attrname::Symbol, val)
+    if hasfield(PointCloud, attrname)
+        setfield!(cloud, val, attrname)
+    else
+        setindex!(cloud.point_attributes, val, attrname)
+    end
+end
+
+function Base.delete!(cloud::PointCloud, key::Symbol)
+    if haskey(cloud.cloud_attributes, key)
+        delete!(cloud.cloud_attributes, key)
+    else
+        delete!(cloud.point_attributes, key)
+    end
+    cloud
+end
+
+function Base.haskey(cloud::PointCloud, key::Symbol)
+    return haskey(cloud.cloud_attributes, key) || haskey(cloud.point_attributes, key)
+end
+
+function reorder!(cloud::PointCloud, indices::AbstractArray)
+    for attr in values(cloud.point_attributes)
+        attr .= attr[indices]
+    end
+end
+
 
 # function Base.getindex(cloud::PointCloud, attrname::Symbol)
 #     haskey(cloud, attrname) || error("Point cloud $cloud has no attribute $attrname")

@@ -1,4 +1,4 @@
-using Statistics: mean
+using Statistics: mean, cov
 
 function compute_radii(cloud; min_neighbors = 6, factor = 1.0)
     cloud[:radius] = radii = Vector{Float32}(undef, length(cloud))
@@ -11,9 +11,10 @@ end
 
 function fit_normal(pts::AbstractArray)
     com = mean(pts)
-    cov = sum((x.-com) * (x-com)' for x in pts)
-    eig = eigen(cov)
-    eig.vectors[:,argmin(eig.values)]
+    cova = (sum(Float64.((x-com) * (x-com)') for x in pts))
+    #cova = Float64.(sum((x.-com) * (x-com)' for x in pts))
+    #eltype(pts)(eigen(Hermitian(Array(cova))).vectors[:,1])
+    eltype(pts)(eigen(Hermitian(cova)).vectors[:,1])
 end
 
 function refine_normal(pts::AbstractArray, guess)
@@ -33,6 +34,14 @@ compute_normals_radius(cloud::PointCloud, radius::Real) =
     compute_normals_radius!(positions(cloud), similar(positions(cloud)), tree(cloud), radius)
 compute_normals_radius(points::AbstractVector, tree, radius::Real) =
     compute_normals_radius!(points, similar(points), tree, radius)
+
+function compute_normals_knn!(points, normals, tree; n_neighbors = 6)
+    @threads for i in 1:length(points)
+        idcs = NN.knn(tree, points[i], n_neighbors)[1]
+        normals[i] = fit_normal(points[idcs])
+    end
+    normals
+end
 
 function compute_normals(cloud::PointCloud; n_neighbors = 6)
     @assert cloud.spatial_index != nothing
