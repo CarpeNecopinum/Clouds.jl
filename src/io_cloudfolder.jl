@@ -84,16 +84,6 @@ function add_point_attribute(folder::CloudFolder, attr::Pair{Symbol,DataType}; i
     add_attribute_impl(folder, point_attributes_file(folder), attr, ignore_existing, check_type, num_points(folder))
 end
 
-# """
-#     add_cloud_attribute(folder::CloudFolder, attr::Pair{Symbol,DataType};
-#         ignore_existing = true, check_type = true)
-#
-#     Add a cloud attribute (single object no matter the size of the cloud) of
-#     the given name => type to the folder.
-# """
-# function add_cloud_attribute(folder::CloudFolder, attr::Pair{Symbol,DataType}; ignore_existing = true, check_type = true)
-#     add_attribute_impl(folder, cloud_attributes_file(folder), attr, ignore_existing, check_type, 1)
-# end
 
 """
     mmap(::CloudFolder)
@@ -115,6 +105,12 @@ function mmap(folder::CloudFolder)
     PointCloud(point_attributes, cloud_attributes)
 end
 
+"""
+    sync!(::PointCloud)
+
+Force synchronization of all properties of a memory-mapped PointCloud. It also causes cloud
+attributes to be saved.
+"""
 function sync!(cloud::PointCloud)
     @assert haskey(cloud.cloud_attributes, :_folder) "To sync! a cloud it has to be a mapped one"
     for a in values(cloud.point_attributes)
@@ -129,6 +125,11 @@ function sync!(cloud::PointCloud)
     cloud
 end
 
+"""
+    resize!(::CloudFolder, new_size::Int)
+
+Resizes the binary files of the CloudFolder to allow storage of `new_size` points.
+"""
 function Base.resize!(folder::CloudFolder, new_size::Int)
     attrs = read_attribute_types(point_attributes_file(folder))
     for (name, type) in attrs
@@ -141,11 +142,16 @@ function Base.resize!(folder::CloudFolder, new_size::Int)
     folder
 end
 
+"""
+    CloudFolder(path::String, init::PointCloud)
+
+Initializes a `CloudFolder` at the given `path` with the point and cloud attributes from
+`init`. A format that is suitable for out-of-core work on point clouds using memory mapping
+of flat binary files.
+"""
 function CloudFolder(path::String, init::PointCloud)
     folder = CloudFolder(path)
     n_points = length(init)
-
-    #JLD2.save(cloud_attributes_file(folder), "cloud_attributes", init.cloud_attributes)
 
     for (k,v) in init.point_attributes
         add_point_attribute(folder, k => eltype(v))
