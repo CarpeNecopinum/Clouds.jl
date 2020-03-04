@@ -27,17 +27,21 @@ function test_push!(set::AbstractSet, v)
     old_len != length(set)
 end
 
-function Base.append!(filter::KeepFirstGridFilter, cloud::PointCloud)
+"""
+    insert!(filter::KeepFirstGridFilter, positions, cloud::PointCloud)
+
+Insert `cloud` into the filtered PointCloud held by `filter`.
+Use `positions` as point coordinates for the grid filtering.
+"""
+function Base.insert!(filter::KeepFirstGridFilter, positions, cloud::PointCloud)
     # Identify indices that need to be copied over
     copy = Int32[]
     @showprogress "Filtering... " 1 for i in 1:length(cloud)
-        key = floor.(Int32, cloud.positions[i] / filter.edgelen)
+        key = floor.(Int32, positions[i] / filter.edgelen)
         if test_push!(filter.full_cells, key)
             push!(copy, i)
         end
     end
-
-    println(copy)
 
     # Copy attributes over
     for (key, value) in cloud.point_attributes
@@ -46,5 +50,12 @@ function Base.append!(filter::KeepFirstGridFilter, cloud::PointCloud)
         end
         append!(filter.cloud[key], value[copy])
     end
-    filter
 end
+
+"""
+    append!(filter::KeepFirstGridFilter, cloud::PointCloud)
+
+Insert `cloud` into the filtered PointCloud held by `filter`.
+Use cloud.positions as point coordinates for the filtering.
+"""
+Base.append!(filter::KeepFirstGridFilter, cloud::PointCloud) = insert!(filter, cloud.positions, cloud)
