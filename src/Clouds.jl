@@ -48,5 +48,6 @@ module Clouds
         compute_normals,
         add_point_attribute,
         add_cloud_attribute,
-        CloudFolder
+        CloudFolder,
+        KeepFirstGridFilter
 end
