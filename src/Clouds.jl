@@ -28,7 +28,6 @@ module Clouds
     include("aos_vector.jl")
     include("scaled_view.jl")
 
-    include("io_pts.jl")
     include("io_e57.jl")
     include("io_pbrbin.jl")
     include("io_vrsplats.jl")
@@ -41,7 +40,8 @@ module Clouds
 
     export PointCloud,
         loadPBRBIN,
-        loadPTS,
+        loadASCII,
+        saveASCII,
         saveVRSplats,
         compute_radii,
         loadE57,
