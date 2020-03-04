@@ -1,42 +1,50 @@
+abstract type AbstractGridFilter end
 
-struct CloudGridV2{Cloud <: PointCloud}
-    cloud::Cloud
-    edgeLen::Float32
-    grid::Set{Vec3{Int32}}
+"""
+    `KeepFirstGridFilter`
+
+    A simple grid filter that only keeps the first point added to each cell.
+"""
+struct KeepFirstGridFilter <: AbstractGridFilter
+    cloud::PointCloud
+    edgelen::Float32
+    full_cells::Set{Vec3{Int32}}
 end
 
-CloudGrid = CloudGridV2
-CloudGridV2(edgeLen::Float32) = CloudGridV2(PointCloud(), edgeLen, Set{Vec3{Int32}}())
+KeepFirstGridFilter(edgelen::Real) = KeepFirstGridFilter(PointCloud(), edgelen, Set{Vec3{Int32}}())
 
-function insert_cloud!(grid::CloudGrid, cloud::PointCloud)
+"""
+    test_push!(set::AbstractSet, value)
+
+Insert `value` into the `set`.
+
+If the `set` already contained `value`, return false.
+If `value` was newly inserted into `set`, return true.
+"""
+function test_push!(set::AbstractSet, v)
+    old_len = length(set)
+    push!(set, v)
+    old_len != length(set)
+end
+
+function Base.append!(filter::KeepFirstGridFilter, cloud::PointCloud)
+    # Identify indices that need to be copied over
     copy = Int32[]
     @showprogress "Filtering... " 1 for i in 1:length(cloud)
-        key = floor.(Int32, cloud.positions[i] / grid.edgeLen)
-        if !(key in grid.grid)
-            push!(grid.grid, key)
+        key = floor.(Int32, cloud.positions[i] / filter.edgelen)
+        if test_push!(filter.full_cells, key)
             push!(copy, i)
         end
     end
 
-    for (key, value) in cloud.attributes
-        haskey(grid.cloud, key) || (grid.cloud[key] = similar(value, length(grid.cloud)))
-        append!(grid.cloud[key], value[copy])
+    println(copy)
+
+    # Copy attributes over
+    for (key, value) in cloud.point_attributes
+        if !haskey(filter.cloud, key)
+            setproperty!(filter.cloud, key, similar(value, length(filter.cloud)))
+        end
+        append!(filter.cloud[key], value[copy])
     end
-    append!(grid.cloud.positions, cloud.positions[copy])
-    grid
-end
-
-function grid_union(clouds::AbstractVector{T}, edgeLen::Float32) where {T<:PointCloud}
-    grid = CloudGrid(edgeLen)
-
-    @showprogress "Inserting clouds..." for cloud in clouds
-        insert_cloud!(grid, cloud)
-    end
-    grid.cloud
-end
-
-function gridfilter(cloud::PointCloud, edgeLen::Float32)
-    grid = CloudGrid(edgeLen)
-    insert_cloud!(grid, cloud)
-    grid.cloud
+    filter
 end
