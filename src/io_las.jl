@@ -1,3 +1,5 @@
+using PyCall
+
 struct LASCommonHeader
     file_signature::Vec{4,UInt8}
     file_source_id::UInt16
@@ -35,6 +37,21 @@ struct LAS12HeaderTail
     max_z::Float64
     min_z::Float64
 end
+
+"""
+    read_packed(::Type{T}, io::IO)
+
+Read a single instance of a bitstype `T` from `io` in a packed fashion, i.e. read as binary,
+but act like there is no padding between the fields of `T`.
+"""
+function read_packed(::Type{T}, io::IO) where {T}
+    datas = Any[]
+    for t in fieldtypes(T)
+        push!(datas, read(io, t))
+    end
+    T(datas...)
+end
+
 
 function readPointDataRecordFormat3(io, header, tail, ::Val{props}) where {props}
     positions = Vector{Vec3f0}(undef, tail.number_of_point_records)
@@ -172,7 +189,6 @@ function resizeLAS(filename::AbstractString, new_size::Size)
 
 end
 
-using PyCall
 
 
 function loadLASPyProperty(filename::AbstractString, propname)
