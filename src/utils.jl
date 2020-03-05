@@ -1,27 +1,54 @@
 using Statistics: mean, cov
 
-function compute_radii(cloud; min_neighbors = 6, factor = 1.0)
-    cloud[:radius] = radii = Vector{Float32}(undef, length(cloud))
-    for i in 1:1024:length(cloud)
-        dists = NN.knn(cloud.spatial_index, cloud.positions[i:min(i+1024,end)], min_neighbors + 1, true)[2]
-        radii[i:min(i+1024,end)] = map(x -> x[end] * factor, dists)
+
+"""
+    compute_radii!(radii, positions, tree; min_neighbors = 6, factor = 1.0)
+
+For each point in `positions` find the minimal radius required to include all
+`min_neighbors` closest neighbors of that point and multiply it with `factor`.
+
+The default values are reasonable defaults for radii to render a point cloud as circular
+disks with the computed radius.
+"""
+function compute_radii!(radii, positions, tree; min_neighbors = 6, factor = 1.0)
+    @threads for i in eachindex(radii)
+        dists = NN.knn(tree, positions[i], min_neighbors + 1, true)[2]
+        radii[i] = dists[end] * factor
     end
     radii
 end
 
-function fit_normal(pts::AbstractArray)
-    com = mean(pts)
-    cova = (sum(Float64.((x-com) * (x-com)') for x in pts))
-    #cova = Float64.(sum((x.-com) * (x-com)' for x in pts))
-    #eltype(pts)(eigen(Hermitian(Array(cova))).vectors[:,1])
-    eltype(pts)(eigen(Hermitian(cova)).vectors[:,1])
+"""
+    fit_normal(points)
+
+Compute the normal of the least-squares plane through `points` to obtain an unoriented
+normal.
+"""
+function fit_normal(points)
+    com = mean(points)
+    cova = (sum(Float64.((x-com) * (x-com)') for x in points))
+    eltype(points)(eigen(Hermitian(cova)).vectors[:,1])
 end
 
-function refine_normal(pts::AbstractArray, guess)
-    n = fit_normal(pts)
+"""
+    refine_normal(points, guess)
+
+Compute a normal analogous to `fit_normal(points)`, but maintains the orientation from
+`guess` (i.e. the dot product of the result and `guess` will be non-negative).
+
+"""
+function refine_normal(points, guess)
+    n = fit_normal(points)
     (guess ⋅ n) > 0 ? n : -n
 end
 
+
+"""
+    compute_normals_radius!(points, normals, tree, radius)
+
+Compute an unoriented normal for each point by fitting a plane through a neighborhood of
+the given `radius` for each point.
+"""
 function compute_normals_radius!(points::AbstractVector, normals::AbstractVector, tree, radius::Real)
     @threads for i in 1:length(points)
         idcs = NN.inrange(tree, points[i], radius, false)
@@ -30,55 +57,56 @@ function compute_normals_radius!(points::AbstractVector, normals::AbstractVector
     normals
 end
 
-compute_normals_radius(cloud::PointCloud, radius::Real) =
-    compute_normals_radius!(positions(cloud), similar(positions(cloud)), tree(cloud), radius)
-compute_normals_radius(points::AbstractVector, tree, radius::Real) =
-    compute_normals_radius!(points, similar(points), tree, radius)
 
+"""
+    compute_normals_knn!(points, normals, tree; n_neighbors = 6)
+
+Compute an unoriented normal for each point by fitting a plane through the `n_neighbors`
+closest neighbors
+"""
 function compute_normals_knn!(points, normals, tree; n_neighbors = 6)
     @threads for i in 1:length(points)
-        idcs = NN.knn(tree, points[i], n_neighbors)[1]
+        idcs = NN.knn(tree, points[i], n_neighbors + 1)[1]
         normals[i] = fit_normal(points[idcs])
     end
     normals
 end
 
-function compute_normals(cloud::PointCloud; n_neighbors = 6)
-    @assert cloud.spatial_index != nothing
 
-    cloud[:normal] = normals = Vector{Vec3f0}(undef, length(cloud))
-    pos = cloud.positions
+"""
+    refine_normals!(points, normals, tree; n_neighbors = 6)
 
-    Threads.@threads for i in 1:64:length(cloud)
-        idcs = NN.knn(cloud.spatial_index, cloud.positions[i:min(i+64,end)], n_neighbors + 1, true)[1]
-        normals[i:min(i+64,end)] .= idcs .|> (x -> fit_normal(pos[x]))
-    end
-    normals
-end
-
-function refine_normals!(cloud::PointCloud; n_neighbors = 6)
-    @assert cloud.spatial_index != nothing
-
-    normals = cloud[:normal]::Vector{Vec3f0}
-    pos = cloud.positions
-
+Update the normals for each point by fitting a plane through the `n_neighbors`
+closest neighbors and orient them such that they are consistent with the previous normal.
+"""
+function refine_normals!(points, normals, tree; n_neighbors = 6)
     Threads.@threads for i in 1:length(cloud)
-        idcs = NN.knn(cloud.spatial_index, cloud.positions[i], n_neighbors + 1, false)[1]
-        normals[i] = refine_normal(pos[idcs], normals[i])
+        idcs = NN.knn(tree, points[i], n_neighbors + 1, false)[1]
+        normals[i] = refine_normal(points[idcs], normals[i])
     end
     normals
 end
 
+"""
+    transform_points!(points::AbstractArray, tx::Mat4)
 
-function transform_points!(vecs::AbstractArray, tx::Mat4)
+Apply the rigid transformation `tx` onto `points`.
+"""
+function transform_points!(points::AbstractArray, tx::Mat4)
     rss = StaticArrays.SMatrix{3,3}(tx[1:3,1:3])
     shift = StaticArrays.SVector{3}(tx[1:3,4])
 
-    for i in LinearIndices(vecs)
-        vecs[i] = rss * vecs[i] + shift
+    for i in eachindex(points)
+        points[i] = rss * points[i] + shift
     end
 end
 
+"""
+    transform_vectors!(vecs::AbstractArray, tx::Mat4)
+
+Apply the rigid transformation `tx` onto `vecs`. Since vectors have only a direction and
+a length, not a position in space, the translational part of `tx` is ignored.
+"""
 function transform_vectors!(vecs::AbstractArray, tx::Mat4)
     rss = StaticArrays.SMatrix{3,3}(tx[1:3,1:3])
     for i in LinearIndices(vecs)
@@ -86,22 +114,16 @@ function transform_vectors!(vecs::AbstractArray, tx::Mat4)
     end
 end
 
-function transform!(cloud::PointCloud, tx::AbstractMatrix)
-    transform_points!(cloud.positions, tx)
-    transform_vectors!(cloud[:normal], tx)
-    cloud
-end
+"""
+    make_normals_consistent!(positions, normals, tree; n_neighbors = 16)
 
-function make_normals_consistent!(cloud::PointCloud, n_neighbors = 16)
-    @assert cloud.spatial_index != nothing "Cloud needs a NN acceleration structure"
-    @assert haskey(cloud, :normal) "Cloud needs to have some normals already"
-
-    normals = cloud[:normal]::Vector{Vec3f0}
-    pos = cloud.positions
-
+Try to orient normals a bit more consistently by flipping the normals towards a weighted
+average of their surrounding points.
+"""
+function make_normals_consistent!(positions, normals, tree; n_neighbors = 16)
     flips = 0
     @showprogress "Making normals consistent " for i in 1:length(cloud)
-        idcs, dists = NN.knn(cloud.spatial_index, cloud.positions[i], n_neighbors + 1, false)
+        idcs, dists = NN.knn(tree, positions[i], n_neighbors + 1, false)
         σ2 = (1.5f0 * dists[end]) ^ 2
 
         avg = mean(normals[pi] * exp(-dists[j]^2 / (2σ2)) for (j,pi) in enumerate(idcs))
@@ -112,24 +134,4 @@ function make_normals_consistent!(cloud::PointCloud, n_neighbors = 16)
         end
     end
     println("Number of flipped normals: $(flips)")
-end
-
-function read_packed(::Type{T}, io::IO) where {T}
-    datas = Any[]
-    for t in fieldtypes(T)
-        push!(datas, read(io, t))
-    end
-    T(datas...)
-end
-
-function grid_filter(points::Vector{Vec3f0}, edge_len::Float32)
-    cells = Dict{Vec3{Int32}, Tuple{Vec3f0,Float32}}()
-    @showprogress "Sorting into grid... " for i in eachindex(points)
-        p = points[i]
-        key = round.(Int32, p ./ edge_len)
-        cell = get!(() -> (Vec3f0(0),0f0), cells, key)
-        cells[key] = (cell[1] + p, cell[2] + 1f0)
-    end
-
-    [x[1] ./ x[2] for x in values(cells)]
 end
