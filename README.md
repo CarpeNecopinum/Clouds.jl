@@ -26,3 +26,36 @@ cloud.fail = randn(99)
 cloud[:name] = "Hello Cloud!"
 
 ```
+
+## Hint(s):
+
+When writing functions that work on `PointCloud`s, don't take a `PointCloud` instance directly.
+Instead pass each attribute as an individual parameter, so you get a type stable function.
+For convenience you can then add a method that takes the `PointCloud` and passes the relevant attributes to the other method.
+
+```julia
+
+function bad_func(cloud::PointCloud)
+    accum = Vec3f0(0.0)
+    for i in eachindex(cloud.positions)
+        # bad: the type of cloud.positions is not stable here (large overhead)
+        accum .+= cloud.positions[i]
+    end
+    accum ./ Ref(length(cloud))
+end
+
+function better_func(positions::Vector)
+    # better: the type of positions is known here
+    # work with positions here
+end
+
+# optional: triggers a single dynamic dispatch of better_func
+# but inside the called method, `positions` is stable again
+better_func(cloud::PointCloud) = better_func(cloud.positions)
+```
+(Mind that for something like computing the center of mass, which `bad_func` attempts to do, `Statistics.mean` will do just fine.)
+
+`bad_func` will trigger a lot of dynamic dispatch, so it'll be slow and probably allocate a lot.
+`better_func` will be specialized on the type of the `positions` array passed in, so it'll be type stable.
+
+Most methods in this package will follow the pattern of `better_func`.
