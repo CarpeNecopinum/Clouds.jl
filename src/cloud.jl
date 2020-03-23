@@ -71,7 +71,7 @@ function Base.length(cloud::PointCloud)
     end
 end
 
-Base.show(io::IO,cloud::PointCloud) = print(io,"$(typeof(cloud))(length=$(length(cloud)), $(keys(cloud.point_attributes)), $(keys(cloud.cloud_attributes))")
+Base.show(io::IO,cloud::PointCloud) = print(io,"$(typeof(cloud))(length=$(length(cloud)), $(keys(cloud.point_attributes)), $(keys(cloud.cloud_attributes)))")
 
 function Base.setindex!(cloud::PointCloud, val, attrname::Union{Symbol,String})
     setindex!(cloud.cloud_attributes, val, Symbol(attrname))
